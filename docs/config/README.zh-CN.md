@@ -237,10 +237,10 @@ export default {
 
 ## cssnano
 
-- Type: `{ mergeRules: false, minifyFontValues: { removeQuotes: false } }`
-- Default: `{}`
+- Type: `object`
+- Default: `{ mergeRules: false, minifyFontValues: { removeQuotes: false } }`
 
-设置 [cssnano 配置项](https://cssnano.co/optimisations/)，基于 default 的配置集合。
+设置 [cssnano 配置项](https://cssnano.co/docs/optimisations/)，基于 default 的配置集合。
 
 比如：`.box { background: url("./css/../img/cat.jpg"); }` 默认会被压缩成 `.box { background: url(img/cat.jpg); }` ，如果不想要这个特性，可以设置，
 
@@ -553,9 +553,7 @@ export default {
   externals: {
     react: 'window.React',
   },
-  scripts: [
-    'https://unpkg.com/react@17.0.1/umd/react.production.min.js',
-  ],
+  scripts: ['https://unpkg.com/react@17.0.1/umd/react.production.min.js'],
 };
 ```
 
@@ -735,7 +733,7 @@ export default {
 
 ## ignoreMomentLocale
 
-- Type: `true`
+- Type: `boolean`
 - Default: `false`
 
 忽略 moment 的 locale 文件，用于减少尺寸。
@@ -813,6 +811,46 @@ export default {
 <meta name="keywords" content="umi, umijs" />
 <meta name="description" content="🍙 插件化的企业级前端应用框架。" />
 <meta bar="foo" />
+```
+
+## mfsu
+
+- Type: `Object`
+- Default : `{}`
+
+开启 mfsu 功能并且添加相关配置。
+
+开启该功能需要同时开启 `webpack5` 和 `dynamicImport`.
+
+包含以下子属性
+
+- includes: `Array(string)`。额外添加到预编译的依赖项。
+
+- exludes: `Array(string)`。不进行预编译的依赖。
+
+- redirect: `Object`。重定向依赖，适用于部分 plugin 不在统一的位置引入。例如：`import {message} from '@umijs/plugin-request/lib/ui';` => `import {message} from 'antd';`。
+
+- development: `{ output: String }`。可以通过 output 自定义 dev 模式下的输出路径。用于将预编译文件同步到 git。
+
+- production: `{ output: String }`。在生产模式中使用 mfsu。如果额外设置了 output，将会将生产模式预编译依赖编译到 output 下。
+
+```js
+mfsu: {
+  includes: ['rc-util/es/hooks/useMergedState', 'swagger-ui-react'],
+  excludes : [],
+  redirect: {
+    '@umijs/plugin-request/lib/ui': {
+      message: 'antd',
+      notification: 'antd',
+    },
+  },
+  development : {
+    output : "./.mfsu-dev",
+  },
+  production : {
+    output : "./mfsu-prod",
+  }
+},
 ```
 
 ## mock
