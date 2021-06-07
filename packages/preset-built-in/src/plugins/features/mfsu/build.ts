@@ -1,23 +1,23 @@
 import { Bundler } from '@umijs/bundler-webpack';
+// @ts-ignore
+import { transform } from '@umijs/deps/compiled/babel/core';
 import * as defaultWebpack from '@umijs/deps/compiled/webpack';
 import WebpackBarPlugin from '@umijs/deps/compiled/webpackbar';
-import { lodash, mkdirp } from '@umijs/utils';
+import { lodash, mkdirp, winPath } from '@umijs/utils';
 import {
   existsSync,
   readdirSync,
+  readFileSync,
   unlinkSync,
   writeFileSync,
-  readFileSync,
 } from 'fs';
 import { join } from 'path';
 import { IApi } from 'umi';
 import webpack from 'webpack';
 import { getBundleAndConfigs } from '../../commands/buildDevUtils';
-import { getMfsuPath, getAlias, TMode } from './mfsu';
-import ModifyChunkNamePlugin from './modifyChunkNamePlugin';
-// @ts-ignore
-import { transform } from '@umijs/deps/compiled/babel/core';
 import ModifyRemoteEntryPlugin from './babel-modify-remote-entry-plugin';
+import { getAlias, getMfsuPath, TMode } from './mfsu';
+import ModifyChunkNamePlugin from './modifyChunkNamePlugin';
 
 const resolveDep = (dep: string) => dep.replace(/\//g, '_');
 
@@ -67,15 +67,18 @@ export const preBuild = async (
     exposes[`./${dep}`] = join(tmpDir, resolveDep(prefix + dep + '.js'));
   });
 
+  const alias = await getAlias(api, { reverse: true });
+
   // 构建虚拟应用
   for (let dep of Object.keys(deps)) {
+    const requireFrom = alias[dep] ? winPath(alias[dep]) : dep;
     writeFileSync(
       join(tmpDir, resolveDep(prefix + dep + '.js')),
       [
         ['antd'].includes(dep) ? 'import "antd/dist/antd.less";' : '',
         ['antd'].includes(dep)
-          ? `export * from "${dep}";`
-          : `export * from "${dep}";import D from "${dep}";export default D;`,
+          ? `export * from "${requireFrom}";`
+          : `export * from "${requireFrom}";import D from "${requireFrom}";export default D;`,
       ].join('\n'),
     );
   }
@@ -88,18 +91,6 @@ export const preBuild = async (
   mfConfig.output!.path = tmpDir;
   mfConfig.output!.filename = prefix + 'index.js';
   mfConfig.output!.libraryTarget = 'commonjs';
-
-  // 添加 alias，避免用户手动安装 @umijs/renderer-react 和 @umijs/runtime
-  const alias = await getAlias(api, { reverse: true });
-
-  mfConfig.resolve = lodash.merge(
-    {
-      ...mfConfig.resolve,
-    },
-    {
-      alias,
-    },
-  );
 
   if (!mfConfig.plugins) {
     mfConfig.plugins = [];
