@@ -1,5 +1,6 @@
-import type { NodePath, Visitor } from '@babel/traverse';
-import { t } from '@umijs/utils';
+import type { NodePath } from '@babel/traverse';
+import { t, winPath } from '@umijs/utils';
+import { extname, isAbsolute } from 'path';
 
 type TLibs = (RegExp | string)[];
 
@@ -7,10 +8,17 @@ interface IAlias {
   [key: string]: string;
 }
 
+interface IExternals {
+  [key: string]: string;
+}
+
 export interface IOpts {
-  libs: TLibs;
+  libs?: TLibs;
+  matchAll?: boolean;
   remoteName: string;
   alias?: IAlias;
+  webpackAlias?: IAlias;
+  webpackExternals?: IExternals;
   onTransformDeps?: Function;
   exportAllMembers?: Record<string, string[]>;
 }
@@ -27,7 +35,12 @@ export function specifiersToProperties(specifiers: any[]) {
           t.objectProperty(t.identifier('default'), s.exported),
         );
       } else if (t.isExportSpecifier(s)) {
-        memo.properties.push(t.objectProperty(s.local, s.exported));
+        if (t.isIdentifier(s.exported, { name: 'default' })) {
+          memo.defaultIdentifier = s.local.name;
+          memo.properties.push(t.objectProperty(s.local, s.local));
+        } else {
+          memo.properties.push(t.objectProperty(s.local, s.exported));
+        }
       } else if (t.isImportNamespaceSpecifier(s)) {
         memo.namespaceIdentifier = s.local;
       } else {
@@ -35,16 +48,91 @@ export function specifiersToProperties(specifiers: any[]) {
       }
       return memo;
     },
-    { properties: [], namespaceIdentifier: null },
+    { properties: [], namespaceIdentifier: null, defaultIdentifier: null },
   );
 }
 
-function isMatchLib(path: string, libs: TLibs, alias: IAlias) {
-  return libs.concat(Object.keys(alias)).some((lib) => {
+const RE_NODE_MODULES = /node_modules/;
+const RE_UMI_LOCAL_DEV = /umi\/packages\//;
+
+function getAlias(opts: { path: string; webpackAlias: IAlias }) {
+  for (const key of Object.keys(opts.webpackAlias)) {
+    const value = opts.webpackAlias[key];
+    // exact alias
+    // ref: https://webpack.js.org/configuration/resolve/#resolvealias
+    if (key.endsWith('$')) {
+      if (opts.path === key.slice(0, -1)) return value;
+      continue;
+    }
+
+    if (opts.path === key) {
+      return value;
+    }
+    const path = isJSFile(opts.webpackAlias[key]) ? key : addLastSlash(key);
+    if (opts.path.startsWith(path)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function isJSFile(path: string) {
+  return ['.js', '.jsx', '.ts', '.tsx'].includes(extname(path));
+}
+
+function addLastSlash(path: string) {
+  return path.endsWith('/') ? path : `${path}/`;
+}
+
+function isMatchLib(
+  path: string,
+  libs: TLibs | undefined,
+  matchAll: boolean | undefined,
+  remoteName: string,
+  alias: IAlias,
+  webpackAlias: IAlias,
+  webpackExternals: IExternals,
+) {
+  if (matchAll) {
+    if (path === 'umi' || path === 'dumi' || path === '@alipay/bigfish')
+      return false;
+    if (path.startsWith(`${remoteName}/`)) return false;
+
+    // don't match dynamic path
+    // e.g. @umijs/deps/compiled/babel/svgr-webpack.js?-svgo,+titleProp,+ref!./umi.svg
+    if (winPath(path).includes('babel/svgr-webpack')) return false;
+
+    // don't match webpack loader
+    // e.g. !!dumi-raw-code-loader!/path/to/VerticalProgress/index.module.less?dumi-raw-code
+    if (path.startsWith('!!')) return false;
+
+    // TODO: support more external types
+    if (typeof webpackExternals === 'object' && webpackExternals[path]) {
+      return false;
+    }
+
+    if (isAbsolute(path)) {
+      return RE_NODE_MODULES.test(path) || RE_UMI_LOCAL_DEV.test(path);
+    } else if (path.charAt(0) === '.') {
+      return false;
+    } else {
+      const aliasPath = getAlias({ path, webpackAlias });
+      if (aliasPath) {
+        return (
+          RE_NODE_MODULES.test(aliasPath) || RE_UMI_LOCAL_DEV.test(aliasPath)
+        );
+      }
+      return true;
+    }
+  }
+
+  return (libs || []).concat(Object.keys(alias)).some((lib) => {
     if (typeof lib === 'string') {
       return lib === path;
-    } else {
+    } else if (lib instanceof RegExp) {
       return lib.test(path);
+    } else {
+      throw new Error('Unsupported lib format.');
     }
   });
 }
@@ -65,6 +153,7 @@ export default function () {
       Program: {
         exit(path: NodePath<t.Program>, { opts }: { opts: IOpts }) {
           const variableDeclarations = [];
+          const exportDefaultDeclarations = [];
           let index = path.node.body.length - 1;
           while (index >= 0) {
             const d = path.node.body[index];
@@ -73,7 +162,11 @@ export default function () {
               const isMatch = isMatchLib(
                 d.source.value,
                 opts.libs,
+                opts.matchAll,
+                opts.remoteName,
                 opts.alias || {},
+                opts.webpackAlias || {},
+                opts.webpackExternals || {},
               );
               opts.onTransformDeps?.({
                 source: d.source.value,
@@ -82,17 +175,25 @@ export default function () {
                 isMatch,
               });
 
-              if (isMatch) {
+              if (
+                isMatch ||
+                // css 走异步加载，修复 mfsu 场景下样式覆盖顺序的问题
+                /\.(css|less|sass|scss|stylus|styl)(\?.+?)?$/.test(
+                  d.source.value,
+                )
+              ) {
                 const { properties, namespaceIdentifier } =
                   specifiersToProperties(d.specifiers);
                 const id = t.objectPattern(properties);
                 const init = t.awaitExpression(
                   t.callExpression(t.import(), [
                     t.stringLiteral(
-                      `${opts.remoteName}/${getPath(
-                        d.source.value,
-                        opts.alias || {},
-                      )}`,
+                      isMatch
+                        ? `${opts.remoteName}/${getPath(
+                            d.source.value,
+                            opts.alias || {},
+                          )}`
+                        : d.source.value,
                     ),
                   ]),
                 );
@@ -125,48 +226,65 @@ export default function () {
               const isMatch = isMatchLib(
                 d.source.value,
                 opts.libs,
+                opts.matchAll,
+                opts.remoteName,
                 opts.alias || {},
+                opts.webpackAlias || {},
+                opts.webpackExternals || {},
               );
               opts.onTransformDeps?.({
                 source: d.source.value,
                 // @ts-ignore
                 file: path.hub.file.opts.filename,
-                isMatch: false,
+                isMatch:
+                  isMatch && opts.exportAllMembers?.[d.source.value]?.length,
                 isExportAllDeclaration: true,
               });
 
-              if (isMatch && opts.exportAllMembers?.[d.source.value]) {
-                const id = t.identifier('__all_exports');
-                const init = t.awaitExpression(
-                  t.callExpression(t.import(), [
-                    t.stringLiteral(
-                      `${opts.remoteName}/${getPath(
-                        d.source.value,
-                        opts.alias || {},
-                      )}`,
-                    ),
-                  ]),
-                );
-                variableDeclarations.unshift(
-                  t.variableDeclaration('const', [
-                    t.variableDeclarator(id, init),
-                  ]),
-                );
+              const exportAllIdentifier = t.identifier(
+                `__all_exports_${d.source.value.replace(/(@|\/|-)/g, '_')}`,
+              );
 
-                // replace node with export const { a, b, c } = __all_exports
-                // a, b, c was declared from opts.exportAllMembers
-                path.node.body[index] = t.exportNamedDeclaration(
-                  t.variableDeclaration('const', [
-                    t.variableDeclarator(
-                      t.objectPattern(
-                        opts.exportAllMembers[d.source.value].map((m) =>
-                          t.objectProperty(t.identifier(m), t.identifier(m)),
-                        ),
+              if (isMatch && opts.exportAllMembers?.[d.source.value]) {
+                if (opts.exportAllMembers[d.source.value].length) {
+                  const id = exportAllIdentifier;
+                  const init = t.awaitExpression(
+                    t.callExpression(t.import(), [
+                      t.stringLiteral(
+                        `${opts.remoteName}/${getPath(
+                          d.source.value,
+                          opts.alias || {},
+                        )}`,
                       ),
-                      t.identifier('__all_exports'),
-                    ),
-                  ]),
-                );
+                    ]),
+                  );
+                  variableDeclarations.unshift(
+                    t.variableDeclaration('const', [
+                      t.variableDeclarator(id, init),
+                    ]),
+                  );
+
+                  // replace node with export const { a, b, c } = __all_exports
+                  // a, b, c was declared from opts.exportAllMembers
+                  path.node.body[index] = t.exportNamedDeclaration(
+                    t.variableDeclaration('const', [
+                      t.variableDeclarator(
+                        t.objectPattern(
+                          opts.exportAllMembers[d.source.value].map((m) =>
+                            t.objectProperty(t.identifier(m), t.identifier(m)),
+                          ),
+                        ),
+                        exportAllIdentifier,
+                      ),
+                    ]),
+                  );
+                }
+                // 有些 export * 只是为了类型
+                else {
+                  path.node.body[index] = t.expressionStatement(
+                    t.numericLiteral(1),
+                  );
+                }
               }
             }
 
@@ -175,7 +293,11 @@ export default function () {
               const isMatch = isMatchLib(
                 d.source.value,
                 opts.libs,
+                opts.matchAll,
+                opts.remoteName,
                 opts.alias || {},
+                opts.webpackAlias || {},
+                opts.webpackExternals || {},
               );
               opts.onTransformDeps?.({
                 source: d.source.value,
@@ -185,7 +307,8 @@ export default function () {
               });
 
               if (isMatch) {
-                const { properties } = specifiersToProperties(d.specifiers);
+                const { properties, defaultIdentifier } =
+                  specifiersToProperties(d.specifiers);
                 const id = t.objectPattern(properties);
                 const init = t.awaitExpression(
                   t.callExpression(t.import(), [
@@ -203,14 +326,78 @@ export default function () {
                   ]),
                 );
                 d.source = null;
+                d.specifiers = d.specifiers.filter((node) => {
+                  return !(
+                    t.isExportSpecifier(node) &&
+                    t.isIdentifier(node.exported) &&
+                    node.exported.name === 'default'
+                  );
+                });
+                if (d.specifiers.length) {
+                  d.specifiers.forEach((node) => {
+                    if (
+                      t.isExportSpecifier(node) &&
+                      t.isIdentifier(node.local) &&
+                      t.isIdentifier(node.exported)
+                    ) {
+                      node.local = node.exported;
+                    }
+                  });
+                } else {
+                  path.node.body.splice(index, 1);
+                }
+
+                if (defaultIdentifier) {
+                  exportDefaultDeclarations.push(
+                    t.exportDefaultDeclaration(t.identifier(defaultIdentifier)),
+                  );
+                }
               }
             }
 
             index -= 1;
           }
-          path.node.body = [...variableDeclarations, ...path.node.body];
+          path.node.body = [
+            ...variableDeclarations,
+            ...path.node.body,
+            ...exportDefaultDeclarations,
+          ];
         },
       },
-    } as Visitor,
+
+      CallExpression(
+        path: NodePath<t.CallExpression>,
+        { opts }: { opts: IOpts },
+      ) {
+        const { node } = path;
+        if (
+          t.isImport(node.callee) &&
+          node.arguments.length === 1 &&
+          node.arguments[0].type === 'StringLiteral'
+        ) {
+          const value = node.arguments[0].value;
+          const isMatch = isMatchLib(
+            value,
+            opts.libs,
+            opts.matchAll,
+            opts.remoteName,
+            opts.alias || {},
+            opts.webpackAlias || {},
+            opts.webpackExternals || {},
+          );
+          opts.onTransformDeps?.({
+            source: value,
+            // @ts-ignore
+            file: path.hub.file.opts.filename,
+            isMatch,
+          });
+          if (isMatch) {
+            node.arguments[0] = t.stringLiteral(
+              `${opts.remoteName}/${getPath(value, opts.alias || {})}`,
+            );
+          }
+        }
+      },
+    },
   };
 }

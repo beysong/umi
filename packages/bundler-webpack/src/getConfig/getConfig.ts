@@ -46,6 +46,7 @@ export interface IOpts {
   port?: number;
   babelOpts?: object;
   babelOptsForDep?: object;
+  mfsu?: boolean;
   targets?: any;
   browserslist?: any;
   bundleImplementor?: typeof defaultWebpack;
@@ -69,6 +70,7 @@ export default async function getConfig(
     entry,
     hot,
     port,
+    mfsu,
     bundleImplementor = defaultWebpack,
     modifyBabelOpts,
     modifyBabelPresetOpts,
@@ -110,7 +112,7 @@ export default async function getConfig(
       : devtool,
   );
 
-  const useHash = config.hash && isProd;
+  const useHash = (mfsu && isDev) || (config.hash && isProd);
   const absOutputPath = join(cwd, config.outputPath || 'dist');
 
   webpackConfig.output
@@ -177,6 +179,7 @@ export default async function getConfig(
   if (modifyBabelPresetOpts) {
     presetOpts = await modifyBabelPresetOpts(presetOpts, {
       type,
+      mfsu,
     });
   }
   let babelOpts = getBabelOpts({
@@ -187,6 +190,7 @@ export default async function getConfig(
   if (modifyBabelOpts) {
     babelOpts = await modifyBabelOpts(babelOpts, {
       type,
+      mfsu,
     });
   }
 
@@ -200,7 +204,12 @@ export default async function getConfig(
         // issue: https://github.com/umijs/umi/issues/5594
         ...(process.env.APP_ROOT ? [process.cwd()] : [])
       ]).end()
-      .exclude.add(/node_modules/).end()
+      .exclude
+        .add(/node_modules/)
+        // don't compile mfsu temp files
+        // TODO: do not hard code
+        .add(/\.mfsu/)
+        .end()
       .use('babel-loader')
         .loader(require.resolve('@umijs/deps/compiled/babel-loader'))
         .options(babelOpts);
@@ -229,19 +238,6 @@ export default async function getConfig(
             .loader(require.resolve('@umijs/deps/compiled/babel-loader'))
             .options(babelOpts);
     });
-  }
-
-  // umi/dist/index.esm.js 走 babel 编译
-  // why? 极速模式下不打包 @umijs/runtime
-  if (process.env.UMI_DIR) {
-    // prettier-ignore
-    webpackConfig.module
-      .rule('js-for-umi-dist')
-        .test(/\.(js|mjs|jsx)$/)
-        .include.add(join(process.env.UMI_DIR as string, 'dist', 'index.esm.js')).end()
-        .use('babel-loader')
-          .loader(require.resolve('@umijs/deps/compiled/babel-loader'))
-          .options(babelOpts);
   }
 
   // prettier-ignore
@@ -364,6 +360,7 @@ export default async function getConfig(
   // css
   css({
     type,
+    mfsu,
     config,
     webpackConfig,
     isDev,
@@ -394,6 +391,11 @@ export default async function getConfig(
     });
   }
 
+  if (isWebpack5) {
+    // @ts-ignore
+    webpackConfig.target(['web', 'es5']);
+  }
+
   // plugins -> ignore moment locale
   if (config.ignoreMomentLocale) {
     webpackConfig
@@ -418,7 +420,12 @@ export default async function getConfig(
     webpackConfig
       .plugin('progress')
       .use(require.resolve('@umijs/deps/compiled/webpackbar'), [
-        config.ssr
+        mfsu
+          ? {
+              name: 'MFSU',
+              color: '#faac00',
+            }
+          : config.ssr
           ? { name: type === BundlerConfigType.ssr ? 'Server' : 'Client' }
           : {},
       ]);
@@ -513,7 +520,8 @@ export default async function getConfig(
   webpackConfig.when(
     isDev,
     (webpackConfig) => {
-      if (hot) {
+      // mfsu 构建如果有 hmr，会和主应用的 hmr 冲突，因为公用一套全局变量
+      if (!mfsu && hot) {
         webpackConfig
           .plugin('hmr')
           .use(bundleImplementor.HotModuleReplacementPlugin);
@@ -582,6 +590,7 @@ export default async function getConfig(
   if (opts.chainWebpack) {
     webpackConfig = await opts.chainWebpack(webpackConfig, {
       type,
+      mfsu,
       webpack: bundleImplementor,
       createCSSRule: createCSSRuleFn,
     });
@@ -623,7 +632,11 @@ export default async function getConfig(
       // disable unnecessary node libs
       http: false,
       https: false,
-      punycode: false,
+
+      // css hotModuleReplacement depends on punycode
+      // ref: https://github.com/charpeni/react-native-url-polyfill/issues/140
+      // punycode: false,
+
       // mammoth deps on these
       // ref: https://github.com/umijs/umi/issues/6318
       // stream: false,

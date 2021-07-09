@@ -154,9 +154,6 @@ export default (context: any, opts: IOpts = {}) => {
           '@umijs/deps/compiled/babel/babel-plugin-dynamic-import-node',
         ),
       ],
-      opts.autoCSSModules && [
-        require.resolve('@umijs/babel-plugin-auto-css-modules'),
-      ],
       opts.svgr && [
         require.resolve(
           '@umijs/deps/compiled/babel/babel-plugin-named-asset-import',
@@ -180,6 +177,9 @@ export default (context: any, opts: IOpts = {}) => {
             ];
           })
         : []),
+      opts.autoCSSModules && [
+        require.resolve('@umijs/babel-plugin-auto-css-modules'),
+      ],
       opts.importToAwaitRequire && [
         require.resolve('@umijs/babel-plugin-import-to-await-require'),
         opts.importToAwaitRequire,

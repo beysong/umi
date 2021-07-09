@@ -4,7 +4,15 @@ import { join } from 'path';
 export default (api: IApi) => {
   api.describe({
     key: 'webpack5',
-    enableBy: api.EnableBy.config,
+    enableBy() {
+      return (
+        // 需要和 USE_WEBPACK_5 区分开，因为有 mfsu 配置不一定开启 webpack 5
+        process.env.ENABLE_WEBPACK_5 ||
+        api.userConfig.webpack5 ||
+        (api.env === 'development' && api.userConfig.mfsu) ||
+        (api.env === 'production' && api.userConfig.mfsu?.production)
+      );
+    },
     config: {
       schema(joi) {
         return joi.object().keys({
@@ -35,7 +43,7 @@ export default (api: IApi) => {
   api.modifyBundleConfig((memo) => {
     // lazy compilation
     // @ts-ignore
-    if (api.env === 'development' && api.config.webpack5.lazyCompilation) {
+    if (api.env === 'development' && api.config.webpack5?.lazyCompilation) {
       // @ts-ignore
       memo.experiments = {
         // @ts-ignore
@@ -51,6 +59,14 @@ export default (api: IApi) => {
         },
       };
     }
+
+    // 默认开启 top level await
+    // @ts-ignore
+    memo.experiments = {
+      // @ts-ignore
+      ...memo.experiments,
+      topLevelAwait: true,
+    };
 
     // 缓存默认开启，可通过环境变量关闭
     if (process.env.WEBPACK_FS_CACHE !== 'none') {

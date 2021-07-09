@@ -1,47 +1,7 @@
-import { dependenceDiff } from './utils';
+import { matchAll } from './utils';
 
-xtest('dependenceDiff', () => {
-  expect(
-    dependenceDiff(
-      {
-        antd: '4.0.0',
-      },
-      {
-        antd: '3.0.0',
-      },
-    ),
-  ).toEqual('MODIFY');
-  expect(
-    dependenceDiff(
-      {
-        antd: '4.0.0',
-      },
-      {
-        antd: '4.0.0',
-        lodash: '0.0.0',
-      },
-    ),
-  ).toEqual('ADD');
-  expect(
-    dependenceDiff(
-      {
-        antd: '4.0.0',
-        lodash: '0.0.0',
-      },
-      {
-        antd: '4.0.0',
-      },
-    ),
-  ).toEqual('REMOVE');
-  expect(
-    dependenceDiff(
-      {
-        antd: '4.0.0',
-        lodash: '0.0.0',
-      },
-      {
-        antd: '3.0.0',
-      },
-    ),
-  ).toEqual('MODIFY');
+test('match all', () => {
+  let regexp = /\w+/g;
+  let string = 'a vvvv ccc ddd';
+  expect(matchAll(regexp, string)).toEqual([...string.matchAll(regexp)]);
 });

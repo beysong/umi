@@ -350,7 +350,7 @@ api.addHTMLStyles(() => {
 e.g.
 
 ```ts
-api.addHTMLScript(() => {
+api.addHTMLScripts(() => {
   return [
     {
       content: '',
@@ -663,7 +663,7 @@ api.modifyDefaultConfig((memo) => {
 e.g.
 
 ```ts
-api.modifyHTML(($, { routs }) => {
+api.modifyHTML(($, { route }) => {
   $('h2').addClass('welcome');
   return $;
 });

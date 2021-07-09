@@ -1,12 +1,13 @@
 {
   "name": "@umijs/renderer-mpa",
-  "version": "3.5.0-beta.4",
+  "version": "3.5.7",
   "description": "@umijs/renderer-mpa",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "lib",
-    "src"
+    "src",
+    "dist"
   ],
   "repository": {
     "type": "git",
@@ -27,7 +28,7 @@
   "dependencies": {
     "@types/react": "^16.9.43",
     "@types/react-dom": "^16.9.8",
-    "@umijs/runtime": "3.5.0-beta.4"
+    "@umijs/runtime": "3.5.7"
   },
   "peerDependencies": {
     "react": "16.x || 17.x",

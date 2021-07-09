@@ -813,37 +813,25 @@ export default {
 <meta bar="foo" />
 ```
 
-## mfsu
+## mfsu <Badge>3.5+</Badge>
 
 - Type: `Object`
 - Default : `{}`
 
-开启 mfsu 功能并且添加相关配置。
+开启 mfsu 功能并添加相关配置。
 
-开启该功能需要同时开启 `webpack5` 和 `dynamicImport`.
+> 开启该功能将会自动开启 `webpack5` 和 `dynamicImport`.
 
-包含以下子属性
-
-- includes: `Array(string)`。额外添加到预编译的依赖项。
-
-- exludes: `Array(string)`。不进行预编译的依赖。
-
-- redirect: `Object`。重定向依赖，适用于部分 plugin 不在统一的位置引入。例如：`import {message} from '@umijs/plugin-request/lib/ui';` => `import {message} from 'antd';`。
+包含以下子属性，
 
 - development: `{ output: String }`。可以通过 output 自定义 dev 模式下的输出路径。用于将预编译文件同步到 git。
-
 - production: `{ output: String }`。在生产模式中使用 mfsu。如果额外设置了 output，将会将生产模式预编译依赖编译到 output 下。
+- mfName： `string`。指定预编译依赖的变量名，默认为 `mf`，比如可在 qiankun 主应用里配置
+- exportAllMembers
+- chunks: `string[]`。mfsu 阶段的 chunks 写死了 `['umi']`，可通过此配置项强行修改
 
 ```js
 mfsu: {
-  includes: ['rc-util/es/hooks/useMergedState', 'swagger-ui-react'],
-  excludes : [],
-  redirect: {
-    '@umijs/plugin-request/lib/ui': {
-      message: 'antd',
-      notification: 'antd',
-    },
-  },
   development : {
     output : "./.mfsu-dev",
   },
